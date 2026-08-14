@@ -227,13 +227,17 @@ export const useSessions = (
   // once fully loaded, `revalidateAll` still keeps mutations/passive refreshes
   // complete. Progressive pagination retains SWR's first-page revalidation.
   const [revalidateAllPages, setRevalidateAllPages] = useState(false)
+  const [membershipVersion, setMembershipVersion] = useState(0)
   const { pages, isLoading, isRefreshing, error, hasNext, loadNext, refresh } = useInfiniteQuery('/agent-sessions', {
     query: agentId ? { agentId } : undefined,
     limit: pageSize,
     enabled,
     swrOptions: { revalidateAll: revalidateAllPages, revalidateFirstPage: !loadAll }
   })
-  useDataChange('/agent-sessions', () => {
+  useDataChange('/agent-sessions', (effects) => {
+    if (effects.some((effect) => effect.kind === 'membership')) {
+      setMembershipVersion((v) => v + 1)
+    }
     void refresh()
   })
   // Cache key includes the query, so reorder operates on the same key.
@@ -418,7 +422,8 @@ export const useSessions = (
     isFullyLoaded,
     isLoadingAll,
     isPinsLoading,
-    isPinsRefreshing
+    isPinsRefreshing,
+    membershipVersion
   }
 }
 

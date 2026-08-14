@@ -17,7 +17,7 @@ import {
 } from '@renderer/utils/sidebar'
 import type { Tab } from '@shared/data/cache/cacheValueTypes'
 import type { ReactNode } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 const EMPTY_PIN_IDS = new Map<string, string>()
 const EMPTY_TOPICS: ReturnType<typeof useRawAssistantTopicsSource>['topics'] = []
@@ -109,6 +109,8 @@ function useCommittedAssistantTopicsSource(enabled: boolean, retainDerivedView: 
 function useCommittedAgentSessionsSource(enabled: boolean): AgentSessionsSource {
   const rawSource = useRawAgentSessionsSource({ enabled })
   const [snapshot, setSnapshot] = useState<AgentSessionsSnapshot | null>(null)
+  const lastCommittedMembershipRef = useRef(0)
+  const hasPendingMembership = rawSource.membershipVersion > lastCommittedMembershipRef.current
   const rawSourceReady =
     enabled &&
     rawSource.isFullyLoaded &&
@@ -118,8 +120,22 @@ function useCommittedAgentSessionsSource(enabled: boolean): AgentSessionsSource 
     !rawSource.error
 
   useEffect(() => {
+    // Membership fast-path: a create/delete changed the session set. Commit
+    // the refreshed data as soon as it arrives, even while a follow-up
+    // projection/order refresh is still in flight — otherwise the snapshot
+    // stays frozen for the entire conversation.
+    if (enabled && hasPendingMembership && rawSource.sessions !== snapshot?.sessions) {
+      lastCommittedMembershipRef.current = rawSource.membershipVersion
+      setSnapshot({
+        pinIdBySessionId: rawSource.pinIdBySessionId,
+        sessions: rawSource.sessions
+      })
+      return
+    }
+
     if (!rawSourceReady) return
 
+    lastCommittedMembershipRef.current = rawSource.membershipVersion
     setSnapshot((currentSnapshot) =>
       currentSnapshot?.pinIdBySessionId === rawSource.pinIdBySessionId &&
       currentSnapshot?.sessions === rawSource.sessions
@@ -129,7 +145,14 @@ function useCommittedAgentSessionsSource(enabled: boolean): AgentSessionsSource 
             sessions: rawSource.sessions
           }
     )
-  }, [rawSource.pinIdBySessionId, rawSource.sessions, rawSourceReady])
+  }, [
+    rawSource.pinIdBySessionId,
+    rawSource.sessions,
+    rawSourceReady,
+    enabled,
+    hasPendingMembership,
+    snapshot?.sessions
+  ])
 
   const isColdLoading = enabled && snapshot === null
   const snapshotIsCurrent =
